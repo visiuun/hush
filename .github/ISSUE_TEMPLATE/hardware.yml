@@ -1,0 +1,37 @@
+name: Hardware support
+description: My board, fan controller or sensor isn't detected or doesn't behave
+labels: [hardware]
+body:
+  - type: input
+    id: board
+    attributes:
+      label: Motherboard
+      description: Vendor and model, e.g. "MSI MAG B650 Tomahawk"
+    validations:
+      required: true
+  - type: input
+    id: cpu
+    attributes:
+      label: CPU / GPU
+      description: e.g. "Ryzen 7 7800X3D / RX 7900 XT"
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Settings → Hardware
+      description: Copy the three lines (Super I/O, CPU, GPU) from the Hardware card in Settings.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: hush status --json
+      description: Run `hush status --json` in a terminal and paste the output.
+      render: json
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+      description: What did you expect, what happened instead? Which headers do your fans sit on?
+    validations:
+      required: true

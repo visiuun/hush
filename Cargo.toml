@@ -1,0 +1,74 @@
+[package]
+name = "hush"
+version = "1.0.0"
+edition = "2024"
+description = "Minimal, smart fan control for Windows"
+authors = ["visiuun"]
+license-file = "LICENSE"
+repository = "https://github.com/visiuun/hush"
+readme = "README.md"
+keywords = ["fan-control", "windows", "hardware", "superio", "pwm"]
+categories = ["hardware-support"]
+publish = false
+
+[lib]
+name = "hushcore"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hush"
+path = "src/main.rs"
+
+[[bin]]
+name = "hush-app"
+path = "src/app/main.rs"
+
+[dependencies]
+chrono = "0.4.45"
+clap = { version = "4.6.7", features = ["derive"] }
+eframe = { version = "0.37.0", default-features = false, features = ["default_fonts", "glow"] }
+nvml-wrapper = "0.13.0"
+parking_lot = "0.13.0"
+raw-window-handle = "0.6.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sysinfo = "0.39.6"
+tray-icon = "0.26.1"
+winreg = "0.56.0"
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Threading",
+    "Win32_System_Pipes",
+    "Win32_System_Console",
+    "Win32_System_SystemInformation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Dxgi",
+    "Wdk_Graphics_Direct3D",
+] }
+
+[lints.clippy]
+collapsible_if = "allow"
+needless_range_loop = "allow"
+type_complexity = "allow"
+too_many_arguments = "allow"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[build-dependencies]
+winresource = "0.1.34"

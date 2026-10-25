@@ -1,0 +1,22 @@
+name: Bug report
+description: Something works differently than it should
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Steps to reproduce, what you expected and what you got.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Hush version
+      description: Shown at the bottom of Settings, or `hush --version`.
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: The last lines of `%APPDATA%\Hush\hush.log`, if there is anything relevant.
+      render: text
