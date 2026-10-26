@@ -1004,6 +1004,22 @@ impl App {
                     ui.label(RichText::new(d).font(reg(12.0)).color(DIM));
                 });
             }
+            if let Some(name) = &s.nbfc_found {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if button(ui, I_FAN, "Use it", Kind::Primary, None, 28.0).clicked() {
+                        match hushcore::hw::nbfc::install() {
+                            Ok(_) => self.sh.send(Cmd::Rescan),
+                            Err(e) => hushcore::log(format!("nbfc install: {e}")),
+                        }
+                    }
+                    ui.label(
+                        RichText::new(format!("nbfc-linux has a fan config for {name}. Community-made and untested by Hush: watch the fans and temperatures after switching it on."))
+                            .font(reg(12.0))
+                            .color(AMBER),
+                    );
+                });
+            }
             ui.label(RichText::new("Driver: PawnIO (signed, sandboxed modules) · GPU fans are never touched, the graphics driver keeps them.").font(reg(11.5)).color(FAINT));
         });
         card(ui, "Command line", |ui| {

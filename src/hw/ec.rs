@@ -205,17 +205,27 @@ pub struct Ec {
 }
 
 /// `Ok(None)` = no laptop config in place.
+/// Checks that a config is one Hush can run; returns its model name.
+pub fn validate(text: &str) -> Result<String, String> {
+    parse(text).map(|c| c.notebook_model)
+}
+
+fn parse(text: &str) -> Result<Config, String> {
+    let json: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    if json["FanConfigurations"].as_array().is_some_and(|f| f.iter().any(|f| f.get("ReadRegister").is_none())) {
+        return Err("this config drives the fans through ACPI methods, which Hush doesn't support".into());
+    }
+    let cfg: Config = serde_json::from_value(json).map_err(|e| e.to_string())?;
+    if cfg.fan_configurations.is_empty() {
+        return Err("no FanConfigurations".into());
+    }
+    Ok(cfg)
+}
+
 pub fn probe(driver: bool) -> Result<Option<Box<dyn SuperIo>>, String> {
     let path = config_path();
     let Ok(text) = std::fs::read_to_string(&path) else { return Ok(None) };
-    let json: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-    if json["FanConfigurations"].as_array().is_some_and(|f| f.iter().any(|f| f.get("ReadRegister").is_none())) {
-        return Err(format!("{}: this config drives the fans through ACPI methods, which Hush doesn't support", path.display()));
-    }
-    let cfg: Config = serde_json::from_value(json).map_err(|e| format!("{}: {e}", path.display()))?;
-    if cfg.fan_configurations.is_empty() {
-        return Err(format!("{}: no FanConfigurations", path.display()));
-    }
+    let cfg = parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
     if !driver {
         return Err("laptop EC config found, but the PawnIO driver is not installed".into());
     }
@@ -239,7 +249,7 @@ pub fn probe(driver: bool) -> Result<Option<Box<dyn SuperIo>>, String> {
 }
 
 /// SMBIOS system product name ("ZenBook UX3402ZA", "HP Pavilion Laptop 15-eg0xxx", …).
-fn system_product() -> String {
+pub fn system_product() -> String {
     winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
         .open_subkey(r"HARDWARE\DESCRIPTION\System\BIOS")
         .and_then(|k| k.get_value::<String, _>("SystemProductName"))

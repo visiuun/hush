@@ -43,6 +43,8 @@ pub enum Request {
         #[serde(default)]
         page: Option<String>,
     },
+    /// nbfc-linux laptop config: `status`, `find` (search again), `use` (switch on the found one), `off`.
+    Laptop { action: String },
     Quit,
 }
 
@@ -166,6 +168,33 @@ pub fn handle(sh: &Arc<Shared>, hooks: &Hooks, req: Request) -> Response {
             (hooks.show)(page);
             Response::ok("")
         }
+        Request::Laptop { action } => match action.as_str() {
+            "find" => {
+                sh.send(Cmd::NbfcSearch);
+                Response::ok("Searching nbfc-linux for this laptop's config (see hush laptop)")
+            }
+            "use" => match crate::hw::nbfc::install() {
+                Ok(name) => {
+                    sh.send(Cmd::Rescan);
+                    Response::ok(format!("Using the NBFC config for {name}. Hush now drives the fans through the EC; hush laptop off undoes it"))
+                }
+                Err(e) => Response::err(e),
+            },
+            "off" => match crate::hw::nbfc::uninstall() {
+                Ok(()) => {
+                    sh.send(Cmd::Rescan);
+                    Response::ok("Laptop config removed, fans are back with the firmware")
+                }
+                Err(e) => Response::err(e),
+            },
+            _ => {
+                let s = sh.snapshot();
+                match s.backends.iter().find(|(n, _, _)| n == "NBFC") {
+                    Some((_, ok, d)) => Response { ok: *ok, message: d.clone(), data: None },
+                    None => Response::ok("No search needed: Hush already controls these fans (or this isn't a laptop). hush laptop find searches anyway"),
+                }
+            }
+        },
         Request::Quit => {
             (hooks.quit)();
             Response::ok("Hush is exiting — fans returned to BIOS control")

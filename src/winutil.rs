@@ -20,6 +20,13 @@ use windows::core::{HSTRING, PCWSTR, PWSTR, w};
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 pub const TASK_NAME: &str = "Hush Fan Control";
 
+/// True on machines with a system battery (laptops, tablets).
+pub fn has_battery() -> bool {
+    let mut s = windows::Win32::System::Power::SYSTEM_POWER_STATUS::default();
+    // 128 = no system battery, 255 = unknown.
+    unsafe { windows::Win32::System::Power::GetSystemPowerStatus(&mut s) }.is_ok() && s.BatteryFlag != 128 && s.BatteryFlag != 255
+}
+
 pub fn is_elevated() -> bool {
     unsafe {
         let mut tok = HANDLE::default();

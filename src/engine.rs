@@ -7,7 +7,7 @@
 
 use crate::automation::Automation;
 use crate::config::{Calibration, Config, Curve, FanMode, Mix};
-use crate::hw::{self, Hub};
+use crate::hw::{self, Hub, nbfc};
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -29,6 +29,10 @@ pub enum Cmd {
     Pause(bool),
     Calibrate(Vec<String>),
     CancelCalibration,
+    /// Search nbfc-linux for this laptop's config now, even if a search ran recently.
+    NbfcSearch,
+    /// Detect the hardware again (after a laptop config was added or removed).
+    Rescan,
     Quit,
 }
 
@@ -85,6 +89,9 @@ pub struct Snapshot {
     pub gpu_power: Option<f32>,
     pub alerts: Vec<String>,
     pub tick_ms: f32,
+    /// nbfc-linux config found for this laptop, ready to switch on.
+    #[serde(default)]
+    pub nbfc_found: Option<String>,
 }
 
 impl Snapshot {
@@ -218,6 +225,11 @@ pub struct Engine {
     sys: sysinfo::System,
     alerts: VecDeque<(Instant, String)>,
     seq: u64,
+    nbfc: Option<nbfc::Lookup>,
+    nbfc_job: Option<std::thread::JoinHandle<nbfc::Lookup>>,
+    /// The automatic search ran (or wasn't needed) this session.
+    nbfc_asked: bool,
+    builtin: Vec<String>,
 }
 
 impl Engine {
@@ -258,6 +270,10 @@ impl Engine {
                     sys: sysinfo::System::new(),
                     alerts: VecDeque::new(),
                     seq: 0,
+                    nbfc: nbfc::cached(),
+                    nbfc_job: None,
+                    nbfc_asked: false,
+                    builtin: Vec::new(),
                 };
                 e.run();
             })
@@ -300,6 +316,7 @@ impl Engine {
             self.update_critical(&sensors);
             let views = self.control(&sensors, &fans, dt, now);
             self.platform_mode();
+            self.step_nbfc(&fans);
             self.publish(&sensors, views, &extra, now);
         }
     }
@@ -341,6 +358,11 @@ impl Engine {
                 self.cal_queue.clear();
                 self.cal = None;
             }
+            Cmd::NbfcSearch => {
+                self.nbfc_asked = true;
+                self.start_nbfc_search();
+            }
+            Cmd::Rescan => self.rescan(),
             Cmd::Quit => {}
         }
     }
@@ -382,6 +404,58 @@ impl Engine {
                 }
             });
         }
+    }
+
+    /// Laptops without fan speed control look for an nbfc-linux config once (in the background,
+    /// cached for a week); a match is offered in Settings → Hardware, never switched on by itself.
+    fn step_nbfc(&mut self, fans: &[hw::Fan]) {
+        self.builtin = fans.iter().filter(|f| f.builtin).map(|f| f.id.clone()).collect();
+        if self.nbfc_job.as_ref().is_some_and(|j| j.is_finished()) {
+            if let Some(l) = self.nbfc_job.take().and_then(|j| j.join().ok()) {
+                if let Some(n) = l.usable() {
+                    self.alert(format!("Found an NBFC fan config for {n}: Settings → Hardware → Use it"));
+                }
+                self.nbfc = Some(l);
+            }
+        }
+        // Give a laptop backend a few ticks to settle (ASUS finds out about curves on its first write).
+        if self.nbfc_asked || self.seq < 5 {
+            return;
+        }
+        self.nbfc_asked = true;
+        let laptop = crate::winutil::has_battery() || !self.builtin.is_empty();
+        let no_control = fans.iter().all(|f| !f.controllable);
+        if laptop && no_control && !hw::ec::config_path().exists() && nbfc::due() {
+            self.start_nbfc_search();
+        }
+    }
+
+    fn start_nbfc_search(&mut self) {
+        if self.nbfc_job.is_none() {
+            self.nbfc_job = std::thread::Builder::new().name("hush-nbfc".into()).spawn(nbfc::search).ok();
+        }
+    }
+
+    /// Reopens the hardware. The fans that were part of the old laptop backend are forgotten,
+    /// so the new backend's fans (which reuse their ids) get fresh defaults.
+    fn rescan(&mut self) {
+        self.hub.restore_all();
+        self.hub = Hub::open();
+        let gone = std::mem::take(&mut self.builtin);
+        self.edit_cfg(|c| {
+            for id in &gone {
+                c.fans.remove(id);
+                for p in &mut c.profiles {
+                    p.fans.remove(id);
+                }
+            }
+        });
+        for id in &gone {
+            self.overrides.remove(id);
+        }
+        self.ctl.clear();
+        self.cal = None;
+        self.cal_queue.clear();
     }
 
     /// Laptops without direct fan control: the firmware's own mode follows the profile.
@@ -716,6 +790,13 @@ impl Engine {
             Ok(s) => (n.to_string(), true, s.clone()),
             Err(e) => (n.to_string(), false, e.clone()),
         };
+        let mut backends = vec![backend("Fans", &b.superio), backend("CPU", &b.cpu), backend("GPU", &b.gpu)];
+        if self.nbfc_job.is_some() {
+            backends.push(("NBFC".into(), true, format!("searching nbfc-linux for {}…", hw::ec::system_product())));
+        } else if let Some(l) = &self.nbfc {
+            backends.push(backend("NBFC", &nbfc::describe(l)));
+        }
+        let nbfc_found = self.nbfc.as_ref().filter(|_| !hw::ec::config_path().exists()).and_then(|l| l.usable().map(String::from));
         let sensors_v: Vec<SensorView> = sensors
             .iter()
             .map(|s| SensorView {
@@ -761,12 +842,13 @@ impl Engine {
             critical: self.critical,
             calibration: cal,
             chip: self.hub.chip_name(),
-            backends: vec![backend("Fans", &b.superio), backend("CPU", &b.cpu), backend("GPU", &b.gpu)],
+            backends,
             cpu_load: Some(cpu_load),
             gpu_load: extra.gpu_util,
             gpu_power: extra.gpu_power_w,
             alerts: self.alerts.iter().map(|(_, m)| m.clone()).collect(),
             tick_ms: self.cfg.settings.tick_ms as f32,
+            nbfc_found,
         };
         *self.sh.snap.write() = Arc::new(snap);
         if let Some(f) = &*self.sh.on_update.lock() {

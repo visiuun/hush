@@ -54,10 +54,19 @@ enum Command {
     Start,
     /// Open the window, optionally on a page (overview, fans, automation, settings)
     Show { page: Option<String> },
+    /// Laptop fan config from nbfc-linux: show it, `find` it again, `use` the one found, or turn it `off`
+    Laptop { action: Option<LaptopAction> },
     /// Exit Hush; every fan returns to BIOS control
     Quit,
     /// Send a raw JSON request (see docs) and print the JSON reply
     Raw { json: String },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum LaptopAction {
+    Find,
+    Use,
+    Off,
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -281,6 +290,15 @@ fn main() {
             }
         }
         Command::Automation { state } => say(Request::Automation { on: matches!(state, OnOff::On) }),
+        Command::Laptop { action } => say(Request::Laptop {
+            action: match action {
+                None => "status",
+                Some(LaptopAction::Find) => "find",
+                Some(LaptopAction::Use) => "use",
+                Some(LaptopAction::Off) => "off",
+            }
+            .into(),
+        }),
         Command::Startup { state: None } => {
             println!("start at logon: {}", if winutil::startup_enabled() { "on" } else { "off" });
         }

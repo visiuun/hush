@@ -7,6 +7,7 @@ pub mod ec;
 pub mod gpu;
 pub mod ite;
 pub mod lpc;
+pub mod nbfc;
 pub mod nct;
 pub mod pawnio;
 

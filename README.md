@@ -138,6 +138,7 @@ hush pause | resume          hand everything to the BIOS / take it back
 hush calibrate all|fan2      measure fans (--cancel to stop)
 hush automation on|off       rules on or off
 hush startup on|off          start at logon (elevated task, no UAC prompt)
+hush laptop [find|use|off]   nbfc-linux laptop fan config: status, search again, switch on, remove
 hush start                   start in the tray
 hush show [page]             open the window (overview, fans, automation, settings)
 hush quit                    exit; every fan returns to BIOS control
@@ -163,6 +164,7 @@ Anything that can open a named pipe can drive Hush: send one JSON line to `\\.\p
 {"cmd":"automation","on":false}
 {"cmd":"calibrate","fans":["all"]}
 {"cmd":"show","page":"fans"}
+{"cmd":"laptop","action":"use"}
 {"cmd":"quit"}
 ```
 
@@ -248,7 +250,9 @@ Laptop fans are run by the embedded controller (EC), and every vendor wires it d
 | **ASUS** (Zenbook, Vivobook, ROG, TUF) | ASUS's own firmware interface (`ATKACPI`, installed with MyASUS / Armoury Crate or Windows Update), nothing to set up | Fan RPM and EC temperatures on every model. Full curves on models with custom fan curves (most ROG / TUF, some Zenbook / Vivobook). Everywhere else (Zenbook 14 UM3406, for one) Hush profiles switch the firmware fan mode: *Silent* → Whisper, *Balanced* → Standard, *Performance* → Performance, and automation rules switch it for you. *Max*, Boost and the critical-temperature failsafe also flip the firmware's force-full-speed switch where it has one. Variable fan speeds aren't reachable on these models: the firmware only exposes them to the BIOS |
 | **Any other laptop** (Acer, HP, Lenovo, Dell, MSI, Clevo, …), untested | A [NoteBook FanControl](https://github.com/nbfc-linux/nbfc-linux/tree/main/share/nbfc/configs) model config | Full control of every fan the config describes |
 
-For the second route, find your model in the [nbfc-linux config list](https://github.com/nbfc-linux/nbfc-linux/tree/main/share/nbfc/configs) (300+ models), save it as `%ProgramData%\Hush\laptop.json` and restart Hush. Settings → Hardware shows the model it loaded and warns if the config was made for a different one. EC values aren't RPM, so these fans show duty only and skip calibration. Use a config for your exact model: the wrong one writes the wrong EC registers. Configs that drive fans through ACPI methods or Lua scripts aren't supported.
+For the second route Hush finds the config itself. On a laptop where it has no fan speed control, it downloads the [nbfc-linux config index](https://github.com/nbfc-linux/nbfc-linux/tree/main/share/nbfc/configs) (300+ models) once in the background and matches your model locally, so the model name never leaves your machine. Only an exact match counts (the SMBIOS product name, or an entry in nbfc-linux's alias list): a config for a merely similar model writes the wrong EC registers. A match shows up in **Settings → Hardware** with a **Use it** button, and in `hush laptop`. It's never switched on by itself, because these configs are community-made. A search with no match is repeated after a week; `hush laptop find` searches right away.
+
+You can also pick a config by hand: save it as `%ProgramData%\Hush\laptop.json` and restart Hush. Settings → Hardware shows the model it loaded and warns if the config was made for a different one. EC values aren't RPM, so these fans show duty only and skip calibration. Use a config for your exact model: the wrong one writes the wrong EC registers. Configs that drive fans through ACPI methods or Lua scripts aren't supported.
 
 On exit, pause or crash, laptop fans go back to the firmware the same way desktop headers go back to the BIOS (the original ASUS mode / the config's reset values). Don't run Hush next to another laptop fan tool (Armoury Crate fan control, G-Helper, NBFC, OMEN Gaming Hub, Lenovo Vantage, …).
 
