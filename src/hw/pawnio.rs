@@ -24,6 +24,7 @@ const FN_NAME_LEN: usize = 32;
 pub const LPC_IO: &[u8] = include_bytes!("../../assets/pawnio/LpcIO.bin");
 pub const AMD_FAMILY_17: &[u8] = include_bytes!("../../assets/pawnio/AMDFamily17.bin");
 pub const INTEL_MSR: &[u8] = include_bytes!("../../assets/pawnio/IntelMSR.bin");
+pub const LPC_ACPI_EC: &[u8] = include_bytes!("../../assets/pawnio/LpcACPIEC.bin");
 
 /// True when the PawnIO driver service is registered.
 pub fn installed() -> bool {
@@ -150,6 +151,7 @@ unsafe impl Sync for GlobalMutex {}
 impl GlobalMutex {
     pub const ISA_BUS: &'static str = r"Global\Access_ISABUS.HTP.Method";
     pub const PCI: &'static str = r"Global\Access_PCI";
+    pub const EC: &'static str = r"Global\Access_EC";
 
     pub fn open(name: &str) -> Option<Self> {
         unsafe {

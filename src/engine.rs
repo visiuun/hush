@@ -299,6 +299,7 @@ impl Engine {
             self.auto.evaluate(&self.cfg, &sensors, self.pinned.as_deref());
             self.update_critical(&sensors);
             let views = self.control(&sensors, &fans, dt, now);
+            self.platform_mode();
             self.publish(&sensors, views, &extra, now);
         }
     }
@@ -372,7 +373,7 @@ impl Engine {
         let new: Vec<(String, bool, bool)> = fans
             .iter()
             .filter(|f| !self.cfg.fans.contains_key(&f.id))
-            .map(|f| (f.id.clone(), f.rpm.unwrap_or(0.0) > 100.0, f.controllable))
+            .map(|f| (f.id.clone(), f.builtin || f.rpm.unwrap_or(0.0) > 100.0, f.controllable))
             .collect();
         if !new.is_empty() {
             self.edit_cfg(|c| {
@@ -380,6 +381,20 @@ impl Engine {
                     c.adopt_fan(id, *spinning, *controllable);
                 }
             });
+        }
+    }
+
+    /// Laptops without direct fan control: the firmware's own mode follows the profile.
+    fn platform_mode(&mut self) {
+        let mode = if self.paused {
+            None
+        } else if self.critical || self.boost_until.is_some() {
+            Some(hw::PlatformMode::Full)
+        } else {
+            Some(hw::PlatformMode::for_profile(&self.auto.active))
+        };
+        for e in self.hub.set_mode(mode) {
+            self.alert(e);
         }
     }
 
@@ -595,7 +610,10 @@ impl Engine {
     fn step_calibration(&mut self, fans: &[hw::Fan], now: Instant) {
         if self.cal.is_none() {
             if let Some(f) = self.cal_queue.pop_front() {
-                if fans.iter().any(|x| x.id == f) {
+                if let Some(x) = fans.iter().find(|x| x.id == f && x.builtin && x.rpm.is_none()) {
+                    let name = self.cfg.fans.get(&x.id).map(|i| i.name_or(&x.default_name)).unwrap_or(x.default_name.clone());
+                    self.alert(format!("{name}: no tachometer, nothing to calibrate"));
+                } else if fans.iter().any(|x| x.id == f) {
                     self.cal = Some(CalRun {
                         fan: f,
                         phase: CalPhase::Max { until: now + Duration::from_secs(8) },
@@ -660,11 +678,12 @@ impl Engine {
             let run = self.cal.take().unwrap();
             let id = run.fan.clone();
             let has_fan = run.result.max_rpm >= 100.0;
+            let builtin = fans.iter().any(|f| f.id == id && f.builtin);
             let name = self.cfg.fans.get(&id).map(|f| f.name_or(&id)).unwrap_or(id.clone());
             self.edit_cfg(|c| {
                 let e = c.fans.entry(id.clone()).or_default();
                 e.calibration = has_fan.then_some(run.result.clone());
-                if !has_fan {
+                if !has_fan && !builtin {
                     e.hidden = true;
                 }
             });
@@ -677,6 +696,8 @@ impl Engine {
                     "{name} calibrated: max {:.0} RPM · stops below {:.0} % · starts at {:.0} %",
                     run.result.max_rpm, run.result.stop_duty, run.result.start_duty
                 )
+            } else if builtin {
+                format!("{name}: no RPM reading, calibration skipped")
             } else {
                 format!("{name}: no fan detected on this header (hidden)")
             });
@@ -740,7 +761,7 @@ impl Engine {
             critical: self.critical,
             calibration: cal,
             chip: self.hub.chip_name(),
-            backends: vec![backend("Super I/O", &b.superio), backend("CPU", &b.cpu), backend("GPU", &b.gpu)],
+            backends: vec![backend("Fans", &b.superio), backend("CPU", &b.cpu), backend("GPU", &b.gpu)],
             cpu_load: Some(cpu_load),
             gpu_load: extra.gpu_util,
             gpu_power: extra.gpu_power_w,

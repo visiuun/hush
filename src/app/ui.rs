@@ -275,7 +275,7 @@ impl App {
     // -----------------------------------------------------------------------------------------
 
     fn overview(&mut self, ui: &mut Ui, s: &Snapshot, cfg: &Config) {
-        if let Some((_, _, e)) = s.backends.iter().find(|(n, ok, _)| n == "Super I/O" && !ok) {
+        if let Some((_, _, e)) = s.backends.iter().find(|(n, ok, _)| n == "Fans" && !ok) {
             banner(ui, RED, &format!("Fan controller unavailable: {e}"));
         }
         let hist = self.sh.history.read();

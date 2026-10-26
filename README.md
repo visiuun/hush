@@ -60,7 +60,7 @@ Prefer no installer? Grab **`Hush-x.y.z-portable.zip`**, extract it anywhere and
 
 > Windows SmartScreen may warn about an unknown publisher because the binaries aren't code-signed. Click *More info → Run anyway*, or build from source.
 
-**Requirements:** Windows 10 1809+ or Windows 11, x64, a desktop motherboard with a supported fan controller (see [Hardware](#hardware)).
+**Requirements:** Windows 10 1809+ or Windows 11, x64, and a desktop motherboard with a supported fan controller or a laptop Hush can drive (see [Hardware](#hardware)).
 
 ## Features
 
@@ -237,7 +237,22 @@ Hush talks to the motherboard's Super I/O chip, the part that actually drives th
 | AMD / Intel GPUs | Temperature (WDDM, same as Task Manager) |
 | Motherboard | Whatever the Super I/O exposes (board, socket, chipset, VRM, …) |
 
-Not supported: laptops and most prebuilt OEM desktops (Dell, HP, Lenovo), whose fans are run by a proprietary embedded controller. On some recent Gigabyte boards the second ITE chip is supervised by a Gigabyte EC that can override manual control on its headers.
+### Laptops
+
+Laptop fans are run by the embedded controller (EC), and every vendor wires it differently, so there is no single way in. Hush has two:
+
+> **Status:** ✅ tested on an **ASUS Zenbook 14 (UM3406KA)**. Every other laptop, including other ASUS models (ROG / TUF fan curves) and every other brand through NBFC configs, is **untested and might not work**. If you try it, please [open an issue](https://github.com/visiuun/hush/issues/new/choose) with what happened and `hush status --json`.
+
+| Laptop | How | What you get |
+|---|---|---|
+| **ASUS** (Zenbook, Vivobook, ROG, TUF) | ASUS's own firmware interface (`ATKACPI`, installed with MyASUS / Armoury Crate or Windows Update), nothing to set up | Fan RPM and EC temperatures on every model. Full curves on models with custom fan curves (most ROG / TUF, some Zenbook / Vivobook). Everywhere else (Zenbook 14 UM3406, for one) Hush profiles switch the firmware fan mode: *Silent* → Whisper, *Balanced* → Standard, *Performance* → Performance, and automation rules switch it for you. *Max*, Boost and the critical-temperature failsafe also flip the firmware's force-full-speed switch where it has one. Variable fan speeds aren't reachable on these models: the firmware only exposes them to the BIOS |
+| **Any other laptop** (Acer, HP, Lenovo, Dell, MSI, Clevo, …), untested | A [NoteBook FanControl](https://github.com/nbfc-linux/nbfc-linux/tree/main/share/nbfc/configs) model config | Full control of every fan the config describes |
+
+For the second route, find your model in the [nbfc-linux config list](https://github.com/nbfc-linux/nbfc-linux/tree/main/share/nbfc/configs) (300+ models), save it as `%ProgramData%\Hush\laptop.json` and restart Hush. Settings → Hardware shows the model it loaded and warns if the config was made for a different one. EC values aren't RPM, so these fans show duty only and skip calibration. Use a config for your exact model: the wrong one writes the wrong EC registers. Configs that drive fans through ACPI methods or Lua scripts aren't supported.
+
+On exit, pause or crash, laptop fans go back to the firmware the same way desktop headers go back to the BIOS (the original ASUS mode / the config's reset values). Don't run Hush next to another laptop fan tool (Armoury Crate fan control, G-Helper, NBFC, OMEN Gaming Hub, Lenovo Vantage, …).
+
+Not supported: prebuilt OEM desktops (Dell, HP, Lenovo) with a proprietary fan controller, and laptops that are neither ASUS nor covered by an NBFC config. On some recent Gigabyte boards the second ITE chip is supervised by a Gigabyte EC that can override manual control on its headers.
 
 If your board isn't detected, open **Settings → Hardware**: it says which chip was found and why it was rejected. Please [open an issue](https://github.com/visiuun/hush/issues/new/choose) with that line and `hush status --json`.
 

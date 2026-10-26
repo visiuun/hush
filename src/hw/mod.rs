@@ -1,7 +1,9 @@
-//! Hardware hub: one owner for every backend (Super I/O chips, CPU, GPUs).
+//! Hardware hub: one owner for every backend (Super I/O chips, laptop firmware / EC, CPU, GPUs).
 //! Lives on the engine thread only, so no locking around register access.
 
+pub mod asus;
 pub mod cpu;
+pub mod ec;
 pub mod gpu;
 pub mod ite;
 pub mod lpc;
@@ -28,6 +30,36 @@ pub struct Fan {
     pub manual: bool,
     /// False for tachometer-only headers.
     pub controllable: bool,
+    /// Reported by the platform (laptop firmware / EC config) rather than found on a header:
+    /// always real, even while it sits at 0 RPM or has no tachometer at all.
+    #[serde(default)]
+    pub builtin: bool,
+}
+
+/// Firmware performance mode for platforms where the fans can't be driven directly
+/// (most ASUS Zenbooks / Vivobooks): Hush profiles map onto it. `Full` is the performance mode
+/// plus the firmware's force-full-speed switch, where there is one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlatformMode {
+    Silent,
+    Balanced,
+    Performance,
+    Full,
+}
+
+impl PlatformMode {
+    pub fn for_profile(name: &str) -> Self {
+        let n = name.to_ascii_lowercase();
+        if n.contains("silent") || n.contains("quiet") || n.contains("whisper") {
+            Self::Silent
+        } else if n == crate::config::MAX_PROFILE.to_ascii_lowercase() {
+            Self::Full
+        } else if n.contains("performance") || n.contains("turbo") {
+            Self::Performance
+        } else {
+            Self::Balanced
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -78,6 +110,15 @@ pub trait SuperIo: Send {
         changes.iter().map(|&(i, d)| self.apply(i, d)).collect()
     }
     fn is_manual(&self, i: usize) -> bool;
+    /// Laptop backends: the fans are part of the machine, not probed headers.
+    fn builtin(&self) -> bool {
+        false
+    }
+    /// `Some` = follow the active profile with the firmware's own mode, `None` = put the
+    /// original mode back. Only backends without direct fan control act on it.
+    fn set_mode(&mut self, _mode: Option<PlatformMode>) -> Result<(), String> {
+        Ok(())
+    }
     fn restore_all(&mut self);
     fn dump(&mut self) -> Result<String, String>;
 }
@@ -97,7 +138,6 @@ pub struct Hub {
     cpu: Option<cpu::CpuTemps>,
     gpus: Vec<gpu::Gpu>,
     pub backends: Backends,
-    sio_desc: String,
 }
 
 /// Finds every supported Super I/O chip on both LPC slots.
@@ -125,12 +165,38 @@ fn detect_chips() -> (Vec<Box<dyn SuperIo>>, Vec<String>) {
     (chips, report)
 }
 
+/// Laptops: an NBFC-style EC config the user dropped in wins (it's an explicit choice), then
+/// the ASUS firmware interface when no desktop controller was found.
+fn detect_laptop(driver: bool, chips: &mut Vec<Box<dyn SuperIo>>, report: &mut Vec<String>) {
+    match ec::probe(driver) {
+        Ok(Some(c)) => {
+            chips.insert(0, c);
+            return;
+        }
+        Ok(None) => {}
+        Err(e) => report.push(e),
+    }
+    if !chips.is_empty() {
+        return;
+    }
+    match asus::probe() {
+        Ok(Some(c)) => chips.push(c),
+        Ok(None) => report.push(format!("laptop or OEM board? Add an NBFC config for your model at {}", ec::config_path().display())),
+        Err(e) => report.push(e),
+    }
+}
+
+fn describe(boards: &[Board]) -> String {
+    boards.iter().map(|b| format!("{} · {} headers", b.chip.name(), b.chip.fans())).collect::<Vec<_>>().join(" + ")
+}
+
 impl Hub {
     pub fn open() -> Self {
         let driver = pawnio::installed();
         let no_driver = || Err("PawnIO driver is not installed".to_string());
-        let (boards, sio) = if driver {
-            let (chips, report) = detect_chips();
+        let (boards, sio) = {
+            let (mut chips, mut report) = if driver { detect_chips() } else { (Vec::new(), vec!["PawnIO driver is not installed".to_string()]) };
+            detect_laptop(driver, &mut chips, &mut report);
             let mut first = 0;
             let boards: Vec<Board> = chips
                 .into_iter()
@@ -145,11 +211,9 @@ impl Hub {
                 let why = if report.is_empty() { "no supported fan controller found".to_string() } else { report.join("; ") };
                 (boards, Err(why))
             } else {
-                let d = boards.iter().map(|b| format!("{} · {} headers", b.chip.name(), b.chip.fans())).collect::<Vec<_>>().join(" + ");
+                let d = describe(&boards);
                 (boards, Ok(d))
             }
-        } else {
-            (Vec::new(), no_driver())
         };
         let (cpu, cpu_s) = if driver {
             match cpu::CpuTemps::open() {
@@ -169,8 +233,7 @@ impl Hub {
             }
             Err(e) => (Vec::new(), Err(e)),
         };
-        let sio_desc = sio.clone().unwrap_or_default();
-        Self { boards, cpu, gpus, backends: Backends { superio: sio, cpu: cpu_s, gpu: gpu_s }, sio_desc }
+        Self { boards, cpu, gpus, backends: Backends { superio: sio, cpu: cpu_s, gpu: gpu_s } }
     }
 
     pub fn chip_name(&self) -> Option<String> {
@@ -232,6 +295,7 @@ impl Hub {
                             duty: r.duty.get(i).copied().unwrap_or(0.0),
                             manual: b.chip.is_manual(i),
                             controllable: b.chip.controllable(i),
+                            builtin: b.chip.builtin(),
                         });
                     }
                 }
@@ -239,7 +303,8 @@ impl Hub {
             }
         }
         match status {
-            Some(Ok(())) => self.backends.superio = Ok(self.sio_desc.clone()),
+            // Re-described every time: a laptop backend can drop to firmware modes at runtime.
+            Some(Ok(())) => self.backends.superio = Ok(describe(&self.boards)),
             Some(Err(e)) => self.backends.superio = Err(e),
             None => {}
         }
@@ -278,6 +343,11 @@ impl Hub {
             }
         }
         failed
+    }
+
+    /// Forwards the wanted firmware mode to every backend; returns the errors.
+    pub fn set_mode(&mut self, mode: Option<PlatformMode>) -> Vec<String> {
+        self.boards.iter_mut().filter_map(|b| b.chip.set_mode(mode).err().map(|e| format!("{}: {e}", b.chip.name()))).collect()
     }
 
     pub fn restore_all(&mut self) {
